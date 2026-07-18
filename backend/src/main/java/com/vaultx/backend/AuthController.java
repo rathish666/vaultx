@@ -2,11 +2,13 @@ package com.vaultx.backend;
 
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/auth")
@@ -57,4 +59,17 @@ public class AuthController {
             "expiresIn", 900
         ));
     }
+
+    @GetMapping("/me")
+public ResponseEntity<?> me(Authentication authentication) {
+    UUID userId = UUID.fromString(authentication.getName());
+
+    return userRepository.findById(userId)
+            .<ResponseEntity<?>>map(user -> ResponseEntity.ok(Map.of(
+                    "id", user.getId(),
+                    "email", user.getEmail(),
+                    "displayName", user.getDisplayName() == null ? "" : user.getDisplayName()
+            )))
+            .orElse(ResponseEntity.status(404).body(Map.of("error", "User not found")));
+}
 }
