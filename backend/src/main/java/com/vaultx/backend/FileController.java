@@ -12,18 +12,20 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+
 @RestController
 @RequestMapping("/api/v1/files")
 public class FileController {
 
-    private final FileRepository fileRepository;
-    private final FileStorageService storageService;
+   private final FileRepository fileRepository;
+private final FileVersionRepository fileVersionRepository;
+private final FileStorageService storageService;
 
-    public FileController(FileRepository fileRepository, FileStorageService storageService) {
-        this.fileRepository = fileRepository;
-        this.storageService = storageService;
-    }
-
+public FileController(FileRepository fileRepository, FileVersionRepository fileVersionRepository, FileStorageService storageService) {
+    this.fileRepository = fileRepository;
+    this.fileVersionRepository = fileVersionRepository;
+    this.storageService = storageService;
+}
     @PostMapping("/upload")
     public ResponseEntity<?> upload(@RequestParam("file") MultipartFile file,
                                      @RequestParam(required = false) UUID folderId,
@@ -118,5 +120,51 @@ public ResponseEntity<?> search(@RequestParam String q, Authentication authentic
     UUID ownerId = UUID.fromString(authentication.getName());
     List<FileEntity> results = fileRepository.findByOwnerIdAndIsDeletedFalseAndFilenameContainingIgnoreCase(ownerId, q);
     return ResponseEntity.ok(results);
+}
+@PostMapping("/{id}/upload-version")
+public ResponseEntity<?> uploadNewVersion(@PathVariable UUID id,
+                                           @RequestParam("file") MultipartFile file,
+                                           Authentication authentication) throws IOException {
+    UUID ownerId = UUID.fromString(authentication.getName());
+
+    return fileRepository.findById(id)
+            .filter(f -> f.getOwnerId().equals(ownerId))
+            .<ResponseEntity<?>>map(existing -> {
+                try {
+                    // archive the current version before overwriting
+                    long existingVersionCount = fileVersionRepository.countByFileId(existing.getId());
+                    FileVersion archived = new FileVersion();
+                    archived.setFileId(existing.getId());
+                    archived.setVersionNumber((int) existingVersionCount + 1);
+                    archived.setStoragePath(existing.getStoragePath());
+                    archived.setSizeBytes(existing.getSizeBytes());
+                    fileVersionRepository.save(archived);
+
+                    // store the new content and update the file record to point at it
+                    String newStoragePath = storageService.store(file);
+                    existing.setStoragePath(newStoragePath);
+                    existing.setSizeBytes(file.getSize());
+                    existing.setMimeType(file.getContentType());
+                    fileRepository.save(existing);
+
+                    return ResponseEntity.ok(existing);
+                } catch (IOException e) {
+                    return ResponseEntity.status(500).body(Map.of("error", "Failed to store new version"));
+                }
+            })
+            .orElse(ResponseEntity.status(404).body(Map.of("error", "File not found")));
+}
+
+@GetMapping("/{id}/versions")
+public ResponseEntity<?> listVersions(@PathVariable UUID id, Authentication authentication) {
+    UUID ownerId = UUID.fromString(authentication.getName());
+
+    return fileRepository.findById(id)
+            .filter(f -> f.getOwnerId().equals(ownerId))
+            .<ResponseEntity<?>>map(f -> {
+                List<FileVersion> versions = fileVersionRepository.findByFileIdOrderByVersionNumberDesc(id);
+                return ResponseEntity.ok(versions);
+            })
+            .orElse(ResponseEntity.status(404).body(Map.of("error", "File not found")));
 }
 }

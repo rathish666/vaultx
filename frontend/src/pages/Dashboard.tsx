@@ -32,7 +32,10 @@ export default function Dashboard() {
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [breadcrumbs, setBreadcrumbs] = useState<Breadcrumb[]>([{ id: null, name: "My Files" }]);
 
- async function loadData(folderId: string | null) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<FileItem[] | null>(null);
+
+  async function loadData(folderId: string | null) {
     setLoading(true);
     setError("");
     try {
@@ -49,7 +52,8 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-}
+  }
+
   async function loadTrash() {
     setLoading(true);
     setError("");
@@ -172,6 +176,25 @@ export default function Dashboard() {
       });
   }
 
+  async function handleSearch(e: React.FormEvent) {
+    e.preventDefault();
+    if (!searchQuery.trim()) {
+      setSearchResults(null);
+      return;
+    }
+    try {
+      const results = await apiFetch(`/files/search?q=${encodeURIComponent(searchQuery)}`);
+      setSearchResults(results);
+    } catch (err: any) {
+      setError(err.message || "Search failed");
+    }
+  }
+
+  function clearSearch() {
+    setSearchQuery("");
+    setSearchResults(null);
+  }
+
   function formatSize(bytes: number) {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -217,6 +240,28 @@ export default function Dashboard() {
 
       {view === "files" ? (
         <>
+          <form onSubmit={handleSearch} className="flex gap-2 mb-4">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search files..."
+              className="border rounded px-3 py-2 w-64 text-sm"
+            />
+            <button type="submit" className="bg-gray-800 text-white px-4 py-2 rounded text-sm hover:bg-gray-900">
+              Search
+            </button>
+            {searchResults !== null && (
+              <button
+                type="button"
+                onClick={clearSearch}
+                className="text-sm text-gray-500 hover:text-gray-800 px-2"
+              >
+                Clear
+              </button>
+            )}
+          </form>
+
           <div className="flex items-center gap-1 text-sm text-gray-500 mb-4">
             {breadcrumbs.map((b, i) => (
               <span key={i} className="flex items-center gap-1">
@@ -248,7 +293,7 @@ export default function Dashboard() {
             <p className="text-gray-500">Loading...</p>
           ) : (
             <>
-              {folders.length > 0 && (
+              {searchResults === null && folders.length > 0 && (
                 <div className="mb-6">
                   <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">Folders</h2>
                   <div className="grid grid-cols-4 gap-3">
@@ -265,12 +310,16 @@ export default function Dashboard() {
                 </div>
               )}
 
-              <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">Files</h2>
-              {files.length === 0 ? (
-                <p className="text-gray-500">No files here yet.</p>
+              <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">
+                {searchResults !== null ? `Search results for "${searchQuery}"` : "Files"}
+              </h2>
+              {(searchResults ?? files).length === 0 ? (
+                <p className="text-gray-500">
+                  {searchResults !== null ? "No matching files." : "No files here yet."}
+                </p>
               ) : (
                 <div className="bg-white rounded shadow-sm border divide-y">
-                  {files.map((f) => (
+                  {(searchResults ?? files).map((f) => (
                     <div key={f.id} className="flex justify-between items-center p-3">
                       <div>
                         <p className="font-medium">{f.filename}</p>
