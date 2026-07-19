@@ -8,4 +8,5 @@ import java.util.UUID;
 public interface FileRepository extends JpaRepository<FileEntity, UUID> {
     List<FileEntity> findByOwnerIdAndFolderIdAndIsDeletedFalse(UUID ownerId, UUID folderId);
     List<FileEntity> findByOwnerIdAndFolderIdIsNullAndIsDeletedFalse(UUID ownerId);
+    List<FileEntity> findByOwnerIdAndIsDeletedTrue(UUID ownerId);
 }

@@ -7,6 +7,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -55,6 +56,13 @@ public class FileController {
         return ResponseEntity.ok(files);
     }
 
+    @GetMapping("/trash")
+    public ResponseEntity<?> listTrash(Authentication authentication) {
+        UUID ownerId = UUID.fromString(authentication.getName());
+        List<FileEntity> deleted = fileRepository.findByOwnerIdAndIsDeletedTrue(ownerId);
+        return ResponseEntity.ok(deleted);
+    }
+
     @GetMapping("/{id}/download")
     public ResponseEntity<?> download(@PathVariable UUID id, Authentication authentication) throws IOException {
         UUID ownerId = UUID.fromString(authentication.getName());
@@ -84,9 +92,24 @@ public class FileController {
                 .filter(f -> f.getOwnerId().equals(ownerId))
                 .map(f -> {
                     f.setDeleted(true);
-                    f.setDeletedAt(java.time.OffsetDateTime.now());
+                    f.setDeletedAt(OffsetDateTime.now());
                     fileRepository.save(f);
                     return ResponseEntity.noContent().build();
+                })
+                .orElse(ResponseEntity.status(404).body(Map.of("error", "File not found")));
+    }
+
+    @PostMapping("/{id}/restore")
+    public ResponseEntity<?> restore(@PathVariable UUID id, Authentication authentication) {
+        UUID ownerId = UUID.fromString(authentication.getName());
+
+        return fileRepository.findById(id)
+                .filter(f -> f.getOwnerId().equals(ownerId))
+                .<ResponseEntity<?>>map(f -> {
+                    f.setDeleted(false);
+                    f.setDeletedAt(null);
+                    fileRepository.save(f);
+                    return ResponseEntity.ok(f);
                 })
                 .orElse(ResponseEntity.status(404).body(Map.of("error", "File not found")));
     }
