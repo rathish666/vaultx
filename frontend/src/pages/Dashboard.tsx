@@ -14,20 +14,33 @@ interface FolderItem {
   name: string;
 }
 
+interface Breadcrumb {
+  id: string | null;
+  name: string;
+}
+
 export default function Dashboard() {
   const { user, logout } = useAuth();
   const [files, setFiles] = useState<FileItem[]>([]);
   const [folders, setFolders] = useState<FolderItem[]>([]);
+  const [trashedFiles, setTrashedFiles] = useState<FileItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
+  const [view, setView] = useState<"files" | "trash">("files");
 
-  async function loadData() {
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+  const [breadcrumbs, setBreadcrumbs] = useState<Breadcrumb[]>([{ id: null, name: "My Files" }]);
+
+ async function loadData(folderId: string | null) {
     setLoading(true);
+    setError("");
     try {
+      const filesQuery = folderId ? `?folderId=${folderId}` : "";
+      const foldersQuery = folderId ? `?parentFolderId=${folderId}` : "";
       const [filesData, foldersData] = await Promise.all([
-        apiFetch("/files"),
-        apiFetch("/folders"),
+        apiFetch(`/files${filesQuery}`),
+        apiFetch(`/folders${foldersQuery}`),
       ]);
       setFiles(filesData);
       setFolders(foldersData);
@@ -36,11 +49,53 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
+}
+  async function loadTrash() {
+    setLoading(true);
+    setError("");
+    try {
+      const data = await apiFetch("/files/trash");
+      setTrashedFiles(data);
+    } catch (err: any) {
+      setError(err.message || "Failed to load trash");
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
-    loadData();
-  }, []);
+    if (view === "files") {
+      loadData(currentFolderId);
+    } else {
+      loadTrash();
+    }
+  }, [currentFolderId, view]);
+
+  function openFolder(folder: FolderItem) {
+    setBreadcrumbs([...breadcrumbs, { id: folder.id, name: folder.name }]);
+    setCurrentFolderId(folder.id);
+  }
+
+  function goToBreadcrumb(index: number) {
+    const target = breadcrumbs[index];
+    setBreadcrumbs(breadcrumbs.slice(0, index + 1));
+    setCurrentFolderId(target.id);
+  }
+
+  async function handleNewFolder() {
+    const name = window.prompt("Folder name:");
+    if (!name) return;
+
+    try {
+      await apiFetch("/folders", {
+        method: "POST",
+        body: JSON.stringify({ name, parentFolderId: currentFolderId }),
+      });
+      await loadData(currentFolderId);
+    } catch (err: any) {
+      setError(err.message || "Failed to create folder");
+    }
+  }
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -52,8 +107,13 @@ export default function Dashboard() {
       const token = localStorage.getItem("accessToken");
       const formData = new FormData();
       formData.append("file", file);
+      if (currentFolderId) formData.append("folderId", currentFolderId);
 
-      const response = await fetch("http://localhost:8080/api/v1/files/upload", {
+      const url = currentFolderId
+        ? `http://localhost:8080/api/v1/files/upload?folderId=${currentFolderId}`
+        : "http://localhost:8080/api/v1/files/upload";
+
+      const response = await fetch(url, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
@@ -61,7 +121,7 @@ export default function Dashboard() {
 
       if (!response.ok) throw new Error("Upload failed");
 
-      await loadData();
+      await loadData(currentFolderId);
     } catch (err: any) {
       setError(err.message || "Upload failed");
     } finally {
@@ -77,9 +137,22 @@ export default function Dashboard() {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}` },
       });
-      await loadData();
+      await loadData(currentFolderId);
     } catch (err: any) {
       setError(err.message || "Delete failed");
+    }
+  }
+
+  async function handleRestore(id: string) {
+    try {
+      const token = localStorage.getItem("accessToken");
+      await fetch(`http://localhost:8080/api/v1/files/${id}/restore`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      await loadTrash();
+    } catch (err: any) {
+      setError(err.message || "Restore failed");
     }
   }
 
@@ -105,9 +178,13 @@ export default function Dashboard() {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
+  function switchView(next: "files" | "trash") {
+    setView(next);
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 p-8">
-      <div className="flex justify-between items-center mb-8">
+      <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold text-blue-600">VaultX</h1>
         <div className="flex items-center gap-4">
           <span className="text-sm text-gray-600">{user?.displayName || user?.email}</span>
@@ -117,57 +194,130 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="mb-6">
-        <label className="inline-block bg-blue-600 text-white px-4 py-2 rounded cursor-pointer hover:bg-blue-700">
-          {uploading ? "Uploading..." : "Upload File"}
-          <input type="file" onChange={handleUpload} disabled={uploading} className="hidden" />
-        </label>
+      <div className="flex gap-2 mb-6 border-b">
+        <button
+          onClick={() => switchView("files")}
+          className={`px-4 py-2 text-sm font-medium ${
+            view === "files" ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-500"
+          }`}
+        >
+          My Files
+        </button>
+        <button
+          onClick={() => switchView("trash")}
+          className={`px-4 py-2 text-sm font-medium ${
+            view === "trash" ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-500"
+          }`}
+        >
+          Trash
+        </button>
       </div>
 
       {error && <p className="text-red-600 text-sm mb-4">{error}</p>}
 
-      {loading ? (
-        <p className="text-gray-500">Loading...</p>
+      {view === "files" ? (
+        <>
+          <div className="flex items-center gap-1 text-sm text-gray-500 mb-4">
+            {breadcrumbs.map((b, i) => (
+              <span key={i} className="flex items-center gap-1">
+                {i > 0 && <span>/</span>}
+                <button
+                  onClick={() => goToBreadcrumb(i)}
+                  className={i === breadcrumbs.length - 1 ? "font-semibold text-gray-800" : "hover:underline"}
+                >
+                  {b.name}
+                </button>
+              </span>
+            ))}
+          </div>
+
+          <div className="mb-6 flex gap-3">
+            <label className="inline-block bg-blue-600 text-white px-4 py-2 rounded cursor-pointer hover:bg-blue-700">
+              {uploading ? "Uploading..." : "Upload File"}
+              <input type="file" onChange={handleUpload} disabled={uploading} className="hidden" />
+            </label>
+            <button
+              onClick={handleNewFolder}
+              className="bg-white border px-4 py-2 rounded hover:bg-gray-50"
+            >
+              New Folder
+            </button>
+          </div>
+
+          {loading ? (
+            <p className="text-gray-500">Loading...</p>
+          ) : (
+            <>
+              {folders.length > 0 && (
+                <div className="mb-6">
+                  <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">Folders</h2>
+                  <div className="grid grid-cols-4 gap-3">
+                    {folders.map((f) => (
+                      <button
+                        key={f.id}
+                        onClick={() => openFolder(f)}
+                        className="bg-white p-4 rounded shadow-sm border text-left hover:bg-gray-50"
+                      >
+                        📁 {f.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">Files</h2>
+              {files.length === 0 ? (
+                <p className="text-gray-500">No files here yet.</p>
+              ) : (
+                <div className="bg-white rounded shadow-sm border divide-y">
+                  {files.map((f) => (
+                    <div key={f.id} className="flex justify-between items-center p-3">
+                      <div>
+                        <p className="font-medium">{f.filename}</p>
+                        <p className="text-sm text-gray-500">{formatSize(f.sizeBytes)}</p>
+                      </div>
+                      <div className="flex gap-3">
+                        <button
+                          onClick={() => handleDownload(f.id, f.filename)}
+                          className="text-blue-600 text-sm hover:underline"
+                        >
+                          Download
+                        </button>
+                        <button
+                          onClick={() => handleDelete(f.id)}
+                          className="text-red-600 text-sm hover:underline"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </>
       ) : (
         <>
-          {folders.length > 0 && (
-            <div className="mb-6">
-              <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">Folders</h2>
-              <div className="grid grid-cols-4 gap-3">
-                {folders.map((f) => (
-                  <div key={f.id} className="bg-white p-4 rounded shadow-sm border">
-                    📁 {f.name}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <h2 className="text-sm font-semibold text-gray-500 uppercase mb-2">Files</h2>
-          {files.length === 0 ? (
-            <p className="text-gray-500">No files yet. Upload one above.</p>
+          <h2 className="text-sm font-semibold text-gray-500 uppercase mb-3">Trash</h2>
+          {loading ? (
+            <p className="text-gray-500">Loading...</p>
+          ) : trashedFiles.length === 0 ? (
+            <p className="text-gray-500">Trash is empty.</p>
           ) : (
             <div className="bg-white rounded shadow-sm border divide-y">
-              {files.map((f) => (
+              {trashedFiles.map((f) => (
                 <div key={f.id} className="flex justify-between items-center p-3">
                   <div>
                     <p className="font-medium">{f.filename}</p>
                     <p className="text-sm text-gray-500">{formatSize(f.sizeBytes)}</p>
                   </div>
-                  <div className="flex gap-3">
-                    <button
-                      onClick={() => handleDownload(f.id, f.filename)}
-                      className="text-blue-600 text-sm hover:underline"
-                    >
-                      Download
-                    </button>
-                    <button
-                      onClick={() => handleDelete(f.id)}
-                      className="text-red-600 text-sm hover:underline"
-                    >
-                      Delete
-                    </button>
-                  </div>
+                  <button
+                    onClick={() => handleRestore(f.id)}
+                    className="text-blue-600 text-sm hover:underline"
+                  >
+                    Restore
+                  </button>
                 </div>
               ))}
             </div>
