@@ -113,4 +113,10 @@ public class FileController {
                 })
                 .orElse(ResponseEntity.status(404).body(Map.of("error", "File not found")));
     }
+    @GetMapping("/search")
+public ResponseEntity<?> search(@RequestParam String q, Authentication authentication) {
+    UUID ownerId = UUID.fromString(authentication.getName());
+    List<FileEntity> results = fileRepository.findByOwnerIdAndIsDeletedFalseAndFilenameContainingIgnoreCase(ownerId, q);
+    return ResponseEntity.ok(results);
+}
 }
