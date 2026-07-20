@@ -34,6 +34,63 @@ export default function Dashboard() {
 
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<FileItem[] | null>(null);
+  const [versionsFileId, setVersionsFileId] = useState<string | null>(null);
+  const [versions, setVersions] = useState<any[]>([]);
+  const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  async function openVersions(fileId: string) {
+    setVersionsFileId(fileId);
+    try {
+      const data = await apiFetch(`/files/${fileId}/versions`);
+      setVersions(data);
+    } catch (err: any) {
+      setError(err.message || "Failed to load versions");
+    }
+}
+
+function closeVersions() {
+    setVersionsFileId(null);
+    setVersions([]);
+}
+
+async function handleRestoreVersion(fileId: string, versionId: string) {
+    try {
+      const token = localStorage.getItem("accessToken");
+      await fetch(`http://localhost:8080/api/v1/files/${fileId}/versions/${versionId}/restore`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      closeVersions();
+      await loadData(currentFolderId);
+    } catch (err: any) {
+      setError(err.message || "Restore version failed");
+    }
+}
+
+async function openPreview(file: FileItem) {
+    setPreviewFile(file);
+    try {
+      const token = localStorage.getItem("accessToken");
+      const res = await fetch(`http://localhost:8080/api/v1/files/${file.id}/download`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const blob = await res.blob();
+      setPreviewUrl(window.URL.createObjectURL(blob));
+    } catch (err: any) {
+      setError(err.message || "Failed to load preview");
+    }
+}
+
+function closePreview() {
+    if (previewUrl) window.URL.revokeObjectURL(previewUrl);
+    setPreviewFile(null);
+    setPreviewUrl(null);
+}
+
+function isPreviewable(mimeType: string) {
+    return mimeType.startsWith("image/") || mimeType === "application/pdf" || mimeType.startsWith("text/");
+}
 
   async function loadData(folderId: string | null) {
     setLoading(true);
@@ -326,19 +383,33 @@ export default function Dashboard() {
                         <p className="text-sm text-gray-500">{formatSize(f.sizeBytes)}</p>
                       </div>
                       <div className="flex gap-3">
-                        <button
-                          onClick={() => handleDownload(f.id, f.filename)}
-                          className="text-blue-600 text-sm hover:underline"
-                        >
-                          Download
-                        </button>
-                        <button
-                          onClick={() => handleDelete(f.id)}
-                          className="text-red-600 text-sm hover:underline"
-                        >
-                          Delete
-                        </button>
-                      </div>
+    {isPreviewable(f.mimeType) && (
+      <button
+        onClick={() => openPreview(f)}
+        className="text-gray-700 text-sm hover:underline"
+      >
+        Preview
+      </button>
+    )}
+    <button
+      onClick={() => openVersions(f.id)}
+      className="text-gray-700 text-sm hover:underline"
+    >
+      Versions
+    </button>
+    <button
+      onClick={() => handleDownload(f.id, f.filename)}
+      className="text-blue-600 text-sm hover:underline"
+    >
+      Download
+    </button>
+    <button
+      onClick={() => handleDelete(f.id)}
+      className="text-red-600 text-sm hover:underline"
+    >
+      Delete
+    </button>
+</div>
                     </div>
                   ))}
                 </div>
@@ -373,6 +444,66 @@ export default function Dashboard() {
           )}
         </>
       )}
+
+      {versionsFileId && (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg shadow-lg w-full max-w-md p-6">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="font-semibold">Version History</h3>
+          <button onClick={closeVersions} className="text-gray-500 hover:text-gray-800">✕</button>
+        </div>
+        {versions.length === 0 ? (
+          <p className="text-gray-500 text-sm">No previous versions.</p>
+        ) : (
+          <div className="divide-y">
+            {versions.map((v) => (
+              <div key={v.id} className="flex justify-between items-center py-2 text-sm">
+                <div>
+                  <p>Version {v.versionNumber}</p>
+                  <p className="text-gray-500">{formatSize(v.sizeBytes)} &middot; {new Date(v.createdAt).toLocaleString()}</p>
+                </div>
+                <button
+                  onClick={() => handleRestoreVersion(versionsFileId, v.id)}
+                  className="text-blue-600 hover:underline"
+                >
+                  Restore
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+)}
+
+{previewFile && (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg shadow-lg w-full max-w-2xl p-6">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="font-semibold">{previewFile.filename}</h3>
+          <button onClick={closePreview} className="text-gray-500 hover:text-gray-800">✕</button>
+        </div>
+        <div className="max-h-[70vh] overflow-auto">
+          {previewUrl && previewFile.mimeType.startsWith("image/") && (
+            <img src={previewUrl} alt={previewFile.filename} className="max-w-full" />
+          )}
+          {previewUrl && previewFile.mimeType === "application/pdf" && (
+            <iframe src={previewUrl} className="w-full h-[65vh]" title="PDF preview" />
+          )}
+          {previewUrl && previewFile.mimeType.startsWith("text/") && (
+            <PreviewText url={previewUrl} />
+          )}
+        </div>
+      </div>
+    </div>
+)}
     </div>
   );
+  function PreviewText({ url }: { url: string }) {
+  const [text, setText] = useState("");
+  useEffect(() => {
+    fetch(url).then((r) => r.text()).then(setText);
+  }, [url]);
+  return <pre className="text-sm whitespace-pre-wrap">{text}</pre>;
+}
 }

@@ -167,4 +167,33 @@ public ResponseEntity<?> listVersions(@PathVariable UUID id, Authentication auth
             })
             .orElse(ResponseEntity.status(404).body(Map.of("error", "File not found")));
 }
+@PostMapping("/{id}/versions/{versionId}/restore")
+public ResponseEntity<?> restoreVersion(@PathVariable UUID id, @PathVariable UUID versionId, Authentication authentication) {
+    UUID ownerId = UUID.fromString(authentication.getName());
+
+    return fileRepository.findById(id)
+            .filter(f -> f.getOwnerId().equals(ownerId))
+            .<ResponseEntity<?>>map(existing -> {
+                return fileVersionRepository.findById(versionId)
+                        .filter(v -> v.getFileId().equals(existing.getId()))
+                        .<ResponseEntity<?>>map(versionToRestore -> {
+                            // archive current content as a new version before swapping back
+                            long count = fileVersionRepository.countByFileId(existing.getId());
+                            FileVersion archived = new FileVersion();
+                            archived.setFileId(existing.getId());
+                            archived.setVersionNumber((int) count + 1);
+                            archived.setStoragePath(existing.getStoragePath());
+                            archived.setSizeBytes(existing.getSizeBytes());
+                            fileVersionRepository.save(archived);
+
+                            existing.setStoragePath(versionToRestore.getStoragePath());
+                            existing.setSizeBytes(versionToRestore.getSizeBytes());
+                            fileRepository.save(existing);
+
+                            return ResponseEntity.ok(existing);
+                        })
+                        .orElse(ResponseEntity.status(404).body(Map.of("error", "Version not found")));
+            })
+            .orElse(ResponseEntity.status(404).body(Map.of("error", "File not found")));
+}
 }
